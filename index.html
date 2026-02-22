@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HMM Baum-Welch Visualizer</title>
+    <link rel="stylesheet" href="css/styles.css">
+    <!-- D3.js for State Transition Diagram -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <!-- Chart.js for Convergence Plots -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Google Fonts -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+</head>
+
+<body class="dark-theme">
+    <header class="app-header">
+        <div class="header-pill">
+            <h1>Hidden Markov Model — Baum–Welch Algorithm</h1>
+        </div>
+        <div class="header-controls">
+            <button id="btn-train" class="primary-btn pulse">Train Model</button>
+            <button id="btn-reset" class="secondary-link">Reset</button>
+        </div>
+    </header>
+
+    <main class="container">
+        <!-- Configuration Section -->
+        <section class="section-config card">
+            <div class="section-label">CONFIGURATION</div>
+            <div class="config-grid">
+                <div class="input-field">
+                    <label>Hidden States (N)</label>
+                    <input type="number" id="input-states" value="3" min="1" max="10">
+                </div>
+                <div class="input-field">
+                    <label>Max Iterations</label>
+                    <input type="number" id="input-max-iter" value="150">
+                </div>
+                <div class="input-field">
+                    <label>Tolerance</label>
+                    <input type="text" id="input-tolerance" value="1e-8">
+                </div>
+            </div>
+            <div class="input-field full-width">
+                <label>Observation Sequence (comma-separated integers, 0-based)</label>
+                <textarea id="input-obs" rows="3">0, 1, 0, 1, 0, 0, 1, 0, 1, 1, 0, 1, 0, 1</textarea>
+            </div>
+            <div class="config-actions">
+                <button id="btn-weather" class="preset-btn">Load Weather Preset</button>
+                <button id="btn-dna" class="preset-btn">Load DNA Preset</button>
+                <div class="toggle-group">
+                    <label class="switch">
+                        <input type="checkbox" id="check-advanced" checked>
+                        <span class="slider round"></span>
+                    </label>
+                    <span>Advanced Initialization</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Live Metrics Section -->
+        <section class="section-metrics">
+            <div class="section-label">LIVE METRICS</div>
+            <div class="metrics-grid">
+                <div class="metric-card card">
+                    <span class="label">Iteration</span>
+                    <span id="metric-iter" class="val">0</span>
+                </div>
+                <div class="metric-card card">
+                    <span class="label">Log-Likelihood</span>
+                    <span id="metric-loglik" class="val">-</span>
+                </div>
+                <div class="metric-card card">
+                    <span class="label">Δ (Change)</span>
+                    <span id="metric-delta" class="val">-</span>
+                </div>
+                <div class="metric-card card">
+                    <span class="label">Status</span>
+                    <span id="metric-status" class="val status-idle">Idle</span>
+                </div>
+            </div>
+        </section>
+
+        <!-- Charts Section -->
+        <section class="section-charts grid-2">
+            <div class="chart-box card">
+                <div class="section-label">LOG-LIKELIHOOD CONVERGENCE — LOG P(O|λ)</div>
+                <div class="chart-container">
+                    <canvas id="chart-loglik"></canvas>
+                </div>
+            </div>
+            <div class="chart-box card">
+                <div class="section-label">OBSERVATION PROBABILITY — P(O|λ)</div>
+                <div class="chart-container">
+                    <canvas id="chart-prob"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Diagram Section -->
+        <section class="section-diagram card">
+            <div class="section-label">HMM STATE TRANSITION DIAGRAM</div>
+            <div id="diagram-container" class="diagram-viz">
+                <svg id="state-diagram"></svg>
+                <div id="tooltip" class="diagram-tooltip hidden"></div>
+            </div>
+        </section>
+
+        <!-- Additional Technical Charts -->
+        <section class="section-charts grid-2">
+            <div class="chart-box card">
+                <div class="section-label">OPTIMIZATION LOSS — NEGATIVE LOG-LIKELIHOOD</div>
+                <div class="chart-container">
+                    <canvas id="chart-nll"></canvas>
+                </div>
+            </div>
+            <div class="chart-box card">
+                <div class="section-label">PROBABILITY COMPLEMENT — 1 - P(O|λ)^(1/T) VS MODEL VERSION</div>
+                <div class="chart-container">
+                    <canvas id="chart-complement"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Parameter Evolution -->
+        <section class="section-evolution card">
+            <div class="section-label">PARAMETER EVOLUTION — A[I][J] OVER ITERATIONS</div>
+            <div class="chart-container large">
+                <canvas id="chart-evolution"></canvas>
+            </div>
+        </section>
+
+        <!-- Iteration Log -->
+        <section class="section-log card">
+            <div class="section-label">ITERATION LOG</div>
+            <div class="table-scroll log-table-container">
+                <table id="table-log">
+                    <thead>
+                        <tr id="log-header">
+                            <th>ITER</th>
+                            <th>LOG-LIKELIHOOD</th>
+                            <th>Δ ALL</th>
+                            <!-- Dynamic transition headers will go here -->
+                        </tr>
+                    </thead>
+                    <tbody id="log-body">
+                        <!-- Rows added dynamically -->
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Intermediate Variables -->
+        <section class="section-intermediate card">
+            <div class="section-label">INTERMEDIATE VARIABLES (CURRENT ITERATION)</div>
+            <div class="tabs-sub">
+                <button class="tab-sub-btn active" data-subtab="tab-alpha">Alpha (α)</button>
+                <button class="tab-sub-btn" data-subtab="tab-beta">Beta (β)</button>
+                <button class="tab-sub-btn" data-subtab="tab-gamma">Gamma (γ)</button>
+            </div>
+            <div class="subtab-content" id="tab-alpha">
+                <div id="table-alpha" class="table-scroll"></div>
+            </div>
+            <div class="subtab-content hidden" id="tab-beta">
+                <div id="table-beta" class="table-scroll"></div>
+            </div>
+            <div class="subtab-content hidden" id="tab-gamma">
+                <div id="table-gamma" class="table-scroll"></div>
+            </div>
+        </section>
+
+        <!-- Parameters Section -->
+        <section class="section-params">
+            <div class="metrics-summary grid-4">
+                <div class="summary-card card">
+                    <span class="label">Total Iterations</span>
+                    <span id="sum-iter" class="val">0</span>
+                </div>
+                <div class="summary-card card">
+                    <span class="label">Final log P(O|λ)</span>
+                    <span id="sum-loglik" class="val">-</span>
+                </div>
+                <div class="summary-card card">
+                    <span class="label">Final P(O|λ)</span>
+                    <span id="sum-prob" class="val">-</span>
+                </div>
+                <div class="summary-card card">
+                    <span class="label">Converged</span>
+                    <span id="sum-converged" class="val">No</span>
+                </div>
+            </div>
+
+            <div class="matrix-tables card">
+                <div class="matrix-group">
+                    <h3>Transition Matrix A</h3>
+                    <div id="matrix-a-container" class="table-scroll"></div>
+                </div>
+                <div class="matrix-group">
+                    <h3>Emission Matrix B</h3>
+                    <div id="matrix-b-container" class="table-scroll"></div>
+                </div>
+                <div class="matrix-group">
+                    <h3>Initial Distribution π</h3>
+                    <div id="matrix-pi-container" class="table-scroll"></div>
+                </div>
+            </div>
+        </section>
+
+        <!-- HMM Theory & Algorithm Reference -->
+        <section class="section-theory card">
+            <h2 class="theory-main-title">HMM THEORY & ALGORITHM REFERENCE</h2>
+
+            <div class="theory-block">
+                <h3>1. Hidden Markov Model — Formal Definition</h3>
+                <p>A Hidden Markov Model (HMM) is a probabilistic generative model for sequential data. The system is
+                    assumed to follow a Markov chain of <i>hidden</i> (unobservable) states, each of which emits an
+                    <i>observable</i> symbol according to a state-dependent probability distribution.
+                </p>
+                <p>An HMM is fully specified by the parameter tuple <b>λ = (A, B, π)</b>, where:</p>
+                <div class="table-scroll">
+                    <table class="theory-table">
+                        <thead>
+                            <tr>
+                                <th>Symbol</th>
+                                <th>Name</th>
+                                <th>Definition</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><b>A</b></td>
+                                <td>State Transition Matrix</td>
+                                <td>A[i][j] = P(q<sub>t+1</sub> = S<sub>j</sub> | q<sub>t</sub> = S<sub>i</sub>). Each
+                                    row sums to 1.</td>
+                            </tr>
+                            <tr>
+                                <td><b>B</b></td>
+                                <td>Emission (Observation) Matrix</td>
+                                <td>B[j][k] = P(O<sub>t</sub> = v<sub>k</sub> | q<sub>t</sub> = S<sub>j</sub>). Each row
+                                    sums to 1.</td>
+                            </tr>
+                            <tr>
+                                <td><b>π</b></td>
+                                <td>Initial State Distribution</td>
+                                <td>π[i] = P(q<sub>1</sub> = S<sub>i</sub>). Elements sum to 1.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="theory-note"><i>The model assumes the <b>Markov property</b>: the probability of transitioning
+                        to state S<sub>j</sub> depends only on the current state S<sub>i</sub>, not on the history of
+                        states. It also assumes <b>output independence</b>: the observation at time t depends only on
+                        the current state at time t.</i></p>
+            </div>
+
+            <div class="theory-block">
+                <h3>2. Three Fundamental Problems of HMMs</h3>
+                <div class="grid-3">
+                    <div class="info-card">
+                        <h4>PROBLEM 1 — EVALUATION</h4>
+                        <p>Given λ and an observation sequence O, compute P(O|λ).</p>
+                        <p><i>Solved by the <b>Forward Algorithm</b>.</i></p>
+                    </div>
+                    <div class="info-card">
+                        <h4>PROBLEM 2 — DECODING</h4>
+                        <p>Given λ and O, find the most likely hidden state sequence Q*.</p>
+                        <p><i>Solved by the <b>Viterbi Algorithm</b>.</i></p>
+                    </div>
+                    <div class="info-card">
+                        <h4>PROBLEM 3 — LEARNING</h4>
+                        <p>Given O, find λ* = argmax<sub>λ</sub> P(O|λ).</p>
+                        <p><i>Solved by the <b>Baum-Welch Algorithm</b> (this tool).</i></p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="theory-block">
+                    <h3>3. Forward Algorithm</h3>
+                    <p>The forward variable α<sub>t</sub>(i) represents the probability of observing the partial
+                        sequence O<sub>1</sub>, O<sub>2</sub>, ..., O<sub>t</sub> and being in state S<sub>i</sub> at
+                        time t.</p>
+                    <div class="math-box">
+                        <p><b>Initialization:</b> α<sub>1</sub>(i) = π<sub>i</sub> · B[i][O<sub>1</sub>]</p>
+                        <p><b>Induction (t = 2, ..., T):</b> α<sub>t</sub>(j) = [ Σ<sub>i=1</sub><sup>N</sup>
+                            α<sub>t-1</sub>(i) · A[i][j] ] · B[j][O<sub>t</sub>]</p>
+                        <p><b>Termination:</b> P(O|λ) = Σ<sub>i=1</sub><sup>N</sup> α<sub>T</sub>(i)</p>
+                    </div>
+                    <p class="theory-note">Complexity: O(N<sup>2</sup>T) vs brute-force O(N<sup>T</sup>)</p>
+                </div>
+                <div class="theory-block">
+                    <h3>4. Backward Algorithm</h3>
+                    <p>The backward variable β<sub>t</sub>(i) represents the probability of the partial observation
+                        sequence from t+1 to T, given state S<sub>i</sub> at time t.</p>
+                    <div class="math-box">
+                        <p><b>Initialization:</b> β<sub>T</sub>(i) = 1 ∀ i</p>
+                        <p><b>Induction (t = T-1, ..., 1):</b> β<sub>t</sub>(i) = Σ<sub>j=1</sub><sup>N</sup> A[i][j] ·
+                            B[j][O<sub>t+1</sub>] · β<sub>t+1</sub>(j)</p>
+                    </div>
+                    <p class="theory-note">Both α and β are computed in the E-Step of Baum-Welch.</p>
+                </div>
+            </div>
+
+            <div class="theory-block">
+                <h3>5. Baum-Welch Algorithm (EM for HMMs)</h3>
+                <p>The Baum-Welch algorithm is a special case of the Expectation-Maximization (EM) framework applied to
+                    HMMs. It iteratively alternates between computing the expected sufficient statistics (<b>E-Step</b>)
+                    and re-estimating the model parameters (<b>M-Step</b>).</p>
+                <div class="grid-2">
+                    <div class="info-card">
+                        <h4>E-Step: Compute Responsibilities</h4>
+                        <ul>
+                            <li>Compute α<sub>t</sub>(i) via the forward pass</li>
+                            <li>Compute β<sub>t</sub>(i) via the backward pass</li>
+                            <li>γ<sub>t</sub>(i) = P(q<sub>t</sub>=S<sub>i</sub> | O, λ) = α<sub>t</sub>(i) ·
+                                β<sub>t</sub>(i) / P(O|λ)</li>
+                            <li>ξ<sub>t</sub>(i,j) = P(q<sub>t</sub>=S<sub>i</sub>, q<sub>t+1</sub>=S<sub>j</sub> | O,
+                                λ)</li>
+                        </ul>
+                    </div>
+                    <div class="info-card">
+                        <h4>M-Step: Re-estimate Parameters</h4>
+                        <ul>
+                            <li>Transition: Ā[i][j] = Σ ξ<sub>t</sub>(i,j) / Σ γ<sub>t</sub>(i)</li>
+                            <li>Emission: B[j][k] = Σ<sub>t: O<sub>t</sub>=v<sub>k</sub></sub> γ<sub>t</sub>(j) / Σ
+                                γ<sub>t</sub>(j)</li>
+                            <li>Initial: π[i] = γ<sub>1</sub>(i)</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid-2">
+                <div class="theory-block">
+                    <h3>6. Convergence Guarantees</h3>
+                    <p>The EM framework guarantees that the log-likelihood is <b>monotonically non-decreasing</b> across
+                        iterations:</p>
+                    <div class="math-box centered">
+                        log P(O|λ<sup>(n+1)</sup>) ≥ log P(O|λ<sup>(n)</sup>)
+                    </div>
+                    <p class="theory-note">Convergence is to a local maximum (or saddle point) of the likelihood
+                        surface. The algorithm terminates when |Δ log L| < ε or the maximum iteration count is
+                            reached.</p>
+                </div>
+                <div class="theory-block">
+                    <h3>7. Numerical Stability — Scaling</h3>
+                    <p>For long observation sequences, the forward and backward variables can underflow to zero. This
+                        implementation uses <b>log-space scaling</b> (Rabiner, 1989):</p>
+                    <ul>
+                        <li>At each time step t, compute a scaling coefficient c<sub>t</sub></li>
+                        <li>c<sub>t</sub> = 1 / Σ α<sub>t</sub>(i), applied to normalize α</li>
+                        <li>The same coefficients are used to scale β</li>
+                        <li>Log-likelihood recovered as log P(O|λ) = -Σ log c<sub>t</sub></li>
+                    </ul>
+                    <p class="theory-note">This avoids floating-point underflow while preserving exact computation of γ
+                        and ξ.</p>
+                </div>
+            </div>
+
+            <div class="theory-block">
+                <h3>8. Applications</h3>
+                <div class="grid-4">
+                    <div class="app-card card">
+                        <div class="app-icon">🧬</div>
+                        <h4>Bioinformatics</h4>
+                        <p>Gene finding, protein family classification & sequence alignment.</p>
+                    </div>
+                    <div class="app-card card">
+                        <div class="app-icon">👤</div>
+                        <h4>Speech Recognition</h4>
+                        <p>Acoustic modeling, phoneme recognition & large vocabulary models.</p>
+                    </div>
+                    <div class="app-card card">
+                        <div class="app-icon">📈</div>
+                        <h4>Quantitative Finance</h4>
+                        <p>Regime switching detection, volatility modeling & market analysis.</p>
+                    </div>
+                    <div class="app-card card">
+                        <div class="app-icon">🌦️</div>
+                        <h4>Pattern Recognition</h4>
+                        <p>Climate pattern analysis, POS tagging & handwriting recognition.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="theory-references">
+                <p><b>References</b></p>
+                <ul>
+                    <li>L. R. Rabiner, "A Tutorial on Hidden Markov Models and Selected Applications in Speech
+                        Recognition," <i>Proceedings of the IEEE</i>, vol. 77, no. 2, pp. 257–286, 1989.</li>
+                    <li>A. P. Dempster, N. M. Laird, D. B. Rubin, "Maximum Likelihood from Incomplete Data via the EM
+                        Algorithm," <i>JRSS-B</i>, vol. 39, no. 1, pp. 1–38, 1977.</li>
+                    <li>C. M. Bishop, <i>Pattern Recognition and Machine Learning</i>, Chapter 13: Sequential Data.
+                        Springer, 2006.</li>
+                </ul>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>Implemented by <strong>Meera Nandita S</strong> </p>
+    </footer>
+
+    <!-- Scripts -->
+    <script src="js/hmm.js"></script>
+    <script src="js/diagram.js"></script>
+    <script src="js/app.js"></script>
+</body>
+
+</html>
