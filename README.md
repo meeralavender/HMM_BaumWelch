@@ -1,6 +1,8 @@
 # Hidden Markov Model (HMM) Baum-Welch Visualizer
 
 An interactive web-based dashboard for visualizing and training Hidden Markov Models using the Baum-Welch (Forward-Backward) algorithm.
+## Hosted Project Link
+- https://meeralavender.github.io/HMM_BaumWelch/
 
 ## Developer Information
 - **Name:** Meera Nandita S
@@ -39,3 +41,4 @@ The **Baum–Welch algorithm** is a special case of the Expectation-Maximization
 
 ---
 *Created for educational purposes.*
+
